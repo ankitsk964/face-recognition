@@ -5,6 +5,10 @@ import os
 import shutil
 import pickle
 import dlib
+from datetime import datetime
+import pandas as pd
+import time
+
 
 # Check if dlib is using GPU
 if dlib.DLIB_USE_CUDA:
@@ -70,6 +74,38 @@ def enhance_contrast(image):
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     return clahe.apply(gray)
 
+def mark_attendance(name):
+    now = datetime.now()
+    date_str = now.strftime('%Y-%m-%d')
+    hour = now.hour
+    time_block = f"{hour:02d}:00-{hour+1:02d}:00"
+    
+    attendance_dir = 'attendance'
+    if not os.path.exists(attendance_dir):
+        os.makedirs(attendance_dir)
+    
+    file_path = os.path.join(attendance_dir, f"{date_str}.csv")
+
+    # Create CSV with headers if doesn't exist
+    if not os.path.exists(file_path):
+        df = pd.DataFrame(columns=["Name", "Time Block", "Timestamp"])
+        df.to_csv(file_path, index=False)
+
+    df = pd.read_csv(file_path)
+
+    # Check if attendance for this name and time block is already marked
+    already_marked = ((df["Name"] == name) & (df["Time Block"] == time_block)).any()
+
+    if not already_marked:
+        timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
+        new_entry = pd.DataFrame([[name, time_block, timestamp]], columns=["Name", "Time Block", "Timestamp"])
+        df = pd.concat([df, new_entry], ignore_index=True)
+        df.to_csv(file_path, index=False)
+        print(f"✅ Attendance marked for {name} for period {time_block}")
+    else:
+        print(f"Attendance already marked for {name} for period {time_block}")
+
+
 def process_images():
     for person_name in os.listdir(dataset_dir):
         person_dir = os.path.join(dataset_dir, person_name)
@@ -120,6 +156,7 @@ def recognize_face():
         return
 
     video_capture = cv2.VideoCapture(0)
+    marked_in_this_run = set()  # Track already marked names
 
     while True:
         ret, frame = video_capture.read()
@@ -137,25 +174,30 @@ def recognize_face():
         for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
             face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
             best_match_index = np.argmin(face_distances)
-            
-            print(face_distances[best_match_index])
-            # **Set a confidence threshold**
-            threshold = 0.5  # Adjust based on testing
+
+            threshold = 0.5  # Confidence threshold
             if face_distances[best_match_index] < threshold:
                 name = known_face_names[best_match_index]
             else:
                 name = "Unknown"
 
-            # Scale back the coordinates
+            if name != "Unknown" and name not in marked_in_this_run:
+                mark_attendance(name)
+                marked_in_this_run.add(name)
+                
+                time.sleep(3)  # Delay after marking
+
+            # Scale coordinates back to original
             top *= 4
             right *= 4
             bottom *= 4
             left *= 4
 
-            # Draw bounding box
+            # Draw bounding box and label
             cv2.rectangle(inverted_frame, (left, top), (right, bottom), (0, 255, 0), 2)
             cv2.rectangle(inverted_frame, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
-            cv2.putText(inverted_frame, name, (left + 6, bottom - 6), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 1)
+            cv2.putText(inverted_frame, name, (left + 6, bottom - 6),
+                        cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 1)
 
         cv2.imshow("Face Recognition", inverted_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
