@@ -8,9 +8,12 @@ import dlib
 from datetime import datetime
 import pandas as pd
 import time
+import tkinter as tk
+from tkinter import messagebox
+import threading
+from PIL import Image, ImageTk
 
-
-# Check if dlib is using GPU
+# GPU check
 if dlib.DLIB_USE_CUDA:
     print("Using GPU for face recognition")
 else:
@@ -32,42 +35,70 @@ def load_face_data():
         with open(face_data_file, 'rb') as f:
             known_face_encodings, known_face_names = pickle.load(f)
 
-def add_face():
-    add_face_name = input("Enter your name: ")
-    add_face_path = os.path.join(dataset_dir, add_face_name)
+def add_face_gui():
+    window = tk.Toplevel(root)
+    window.title("Add Face")
+    window.geometry("300x150")
 
-    if os.path.exists(add_face_path):
-        print("Name already exists.")
-        return
+    tk.Label(window, text="Enter Name:").pack(pady=5)
+    name_entry = tk.Entry(window)
+    name_entry.pack(pady=5)
 
-    os.makedirs(add_face_path)
-    video_capture = cv2.VideoCapture(0)
-    if not video_capture.isOpened():
-        print("Error: Could not open webcam.")
-        return
 
-    while True:
-        ret, frame = video_capture.read()
-        if not ret:
-            print("Error: Could not capture frame.")
-            break
-        flipped_frame = cv2.flip(frame, 1)
-        cv2.imshow("Press 's' to capture image, 'q' to quit", flipped_frame)
-        key = cv2.waitKey(1) & 0xFF
-        
-        if key == ord("s"):
-            image_path = os.path.join(add_face_path, f"{add_face_name}_{len(os.listdir(add_face_path)) + 1}.jpg")
-            cv2.imwrite(image_path, flipped_frame)
-            print(f"Saved: {image_path}")
+    def start_capture():
+        name = name_entry.get().strip()
+        if not name:
+            messagebox.showerror("Error", "Name cannot be empty")
+            return
 
-        if key == ord("q"):
-            break
+        add_face_path = os.path.join(dataset_dir, name)
+        if os.path.exists(add_face_path):
+            messagebox.showerror("Error", "Name already exists")
+            return
 
-    video_capture.release()
-    cv2.destroyAllWindows()
-    process_images()
-    load_known_faces()
-    save_face_data()
+        os.makedirs(add_face_path)
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            messagebox.showerror("Error", "Camera could not be opened")
+            return
+        window.destroy()
+        def close_capture():
+            cap.release()
+            cv2.destroyAllWindows()
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            flipped = cv2.flip(frame, 1)
+            cv2.imshow("Press 's' to save, 'q' to quit", flipped)
+
+            if cv2.waitKey(1) & 0xFF == ord('s'):
+                img_path = os.path.join(add_face_path, f"{name}_{len(os.listdir(add_face_path)) + 1}.jpg")
+                cv2.imwrite(img_path, flipped)
+                print(f"Saved: {img_path}")
+
+            if cv2.getWindowProperty("Press 's' to save, 'q' to quit", cv2.WND_PROP_VISIBLE) < 1:
+                break
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        close_capture()
+        process_images()
+        load_known_faces()
+        save_face_data()
+        root.after(0, lambda: messagebox.showinfo("Done", "Face added successfully"))
+        root.after(0, window.destroy)
+
+    def start_capture_thread():
+        threading.Thread(target=start_capture, daemon=True).start()
+
+    tk.Button(window, text="Start Camera", command=start_capture_thread).pack(pady=10)
+    tk.Button(window, text="Close", command=window.destroy).pack()
+
+    
 
 def enhance_contrast(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -86,14 +117,11 @@ def mark_attendance(name):
     
     file_path = os.path.join(attendance_dir, f"{date_str}.csv")
 
-    # Create CSV with headers if doesn't exist
     if not os.path.exists(file_path):
         df = pd.DataFrame(columns=["Name", "Time Block", "Timestamp"])
         df.to_csv(file_path, index=False)
 
     df = pd.read_csv(file_path)
-
-    # Check if attendance for this name and time block is already marked
     already_marked = ((df["Name"] == name) & (df["Time Block"] == time_block)).any()
 
     if not already_marked:
@@ -104,7 +132,6 @@ def mark_attendance(name):
         print(f"✅ Attendance marked for {name} for period {time_block}")
     else:
         print(f"Attendance already marked for {name} for period {time_block}")
-
 
 def process_images():
     for person_name in os.listdir(dataset_dir):
@@ -127,7 +154,7 @@ def process_images():
                 top, right, bottom, left = face_locations[0]
                 face_image = enhanced_image[top:bottom, left:right]
                 cv2.imwrite(gray_image_path, face_image)
-                print(f"Saved cropped enhanced grayscale image: {gray_image_path}")
+                print(f"Saved: {gray_image_path}")
 
 def load_known_faces():
     global known_face_encodings, known_face_names
@@ -136,121 +163,145 @@ def load_known_faces():
 
     for person_name in os.listdir(dataset_gray):
         person_dir = os.path.join(dataset_gray, person_name)
-
         for image_name in os.listdir(person_dir):
             image_path = os.path.join(person_dir, image_name)
-            person_image = face_recognition.load_image_file(image_path)
-
-            # Extract multiple encodings
-            encodings = face_recognition.face_encodings(person_image, model="cnn")
-            
+            img = face_recognition.load_image_file(image_path)
+            encodings = face_recognition.face_encodings(img, model="cnn")
             for encoding in encodings:
                 known_face_encodings.append(encoding)
                 known_face_names.append(person_name)
 
-load_known_faces()
-
-def recognize_face():
+def recognize_face_gui():
+    load_face_data()
     if not known_face_encodings:
-        print("No known faces. Please add faces first.")
+        messagebox.showerror("Error", "No known faces found.")
         return
 
-    video_capture = cv2.VideoCapture(0)
-    marked_in_this_run = set()  # Track already marked names
+    cap = cv2.VideoCapture(0)
+    marked = set()
+
+    def close_window():
+        cap.release()
+        cv2.destroyAllWindows()
 
     while True:
-        ret, frame = video_capture.read()
+        ret, frame = cap.read()
         if not ret:
-            print("Error capturing frame")
             break
 
-        inverted_frame = cv2.flip(frame, 1)
-        small_frame = cv2.resize(inverted_frame, (0, 0), fx=0.25, fy=0.25)
-
-        # Detect faces using CNN model
+        flipped = cv2.flip(frame, 1)
+        small_frame = cv2.resize(flipped, (0, 0), fx=0.25, fy=0.25)
         face_locations = face_recognition.face_locations(small_frame, model="cnn")
         face_encodings = face_recognition.face_encodings(small_frame, face_locations)
 
         for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
-            face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-            best_match_index = np.argmin(face_distances)
+            distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+            index = np.argmin(distances)
+            threshold = 0.5
 
-            threshold = 0.5  # Confidence threshold
-            if face_distances[best_match_index] < threshold:
-                name = known_face_names[best_match_index]
-            else:
-                name = "Unknown"
+            name = known_face_names[index] if distances[index] < threshold else "Unknown"
 
-            if name != "Unknown" and name not in marked_in_this_run:
+            if name != "Unknown" and name not in marked:
                 mark_attendance(name)
-                marked_in_this_run.add(name)
-                
-                time.sleep(3)  # Delay after marking
+                marked.add(name)
+                time.sleep(2)
 
-            # Scale coordinates back to original
-            top *= 4
-            right *= 4
-            bottom *= 4
-            left *= 4
-
-            # Draw bounding box and label
-            cv2.rectangle(inverted_frame, (left, top), (right, bottom), (0, 255, 0), 2)
-            cv2.rectangle(inverted_frame, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
-            cv2.putText(inverted_frame, name, (left + 6, bottom - 6),
+            top *= 4; right *= 4; bottom *= 4; left *= 4
+            cv2.rectangle(flipped, (left, top), (right, bottom), (0, 255, 0), 2)
+            cv2.putText(flipped, name, (left + 6, bottom - 6),
                         cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 1)
 
-        cv2.imshow("Face Recognition", inverted_frame)
+        cv2.imshow("Face Recognition (Press q to close)", flipped)
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    video_capture.release()
-    cv2.destroyAllWindows()
+    close_window()
 
-def delete_face():
-    person_name = input("Enter the name of the person to delete: ")
-    person_dir = os.path.join(dataset_dir, person_name)
-    person_grey_dir = os.path.join(dataset_gray, person_name)
+def delete_face_by_name(name):
+    person_dir = os.path.join(dataset_dir, name)
+    person_grey_dir = os.path.join(dataset_gray, name)
 
-    # Delete from dataset
     for dir_path in [person_dir, person_grey_dir]:
         if os.path.exists(dir_path):
             shutil.rmtree(dir_path)
-            print(f"Deleted folder: {dir_path}")
-        else:
-            print(f"No folder found at: {dir_path}")
-    
-    # Remove from pickle file
+
     if os.path.exists(face_data_file):
         with open(face_data_file, 'rb') as file:
-            face_data = pickle.load(file)
+            data = pickle.load(file)
+        if isinstance(data, tuple):
+            encodings, names = data
+            updated_encodings = [enc for enc, n in zip(encodings, names) if n != name]
+            updated_names = [n for n in names if n != name]
+            with open(face_data_file, 'wb') as f:
+                pickle.dump((updated_encodings, updated_names), f)
 
-        if person_name in face_data:
-            del face_data[person_name]
-            with open(face_data_file, 'wb') as file:
-                pickle.dump(face_data, file)
-            print(f"Deleted {person_name}'s data from the pickle file.")
-        else:
-            print(f"No data found for {person_name} in the pickle file.")
-    else:
-        print("No pickle file found.")
-    
-    # Update known face lists
-    indices_to_remove = [i for i, name in enumerate(known_face_names) if name == person_name]
-    for index in sorted(indices_to_remove, reverse=True):
-        del known_face_encodings[index]
-        del known_face_names[index]
-    
     load_face_data()
-    print("Face data updated.")
+    messagebox.showinfo("Success", f"Deleted face data for {name}")
 
-while True:
-    choice = int(input("1. Add Face\n2. Recognize Face\n3. Delete Face\n4. Exit\nChoice: "))
-    if choice == 1:
-        add_face()
-    elif choice == 2:
-        load_face_data()
-        recognize_face()
-    elif choice == 3:
-        delete_face()
-    else:
-        break
+def delete_face_gui():
+    window = tk.Toplevel(root)
+    window.title("Delete Face")
+    window.geometry("300x150")
+
+    tk.Label(window, text="Enter Name to Delete:").pack(pady=5)
+    name_entry = tk.Entry(window)
+    name_entry.pack(pady=5)
+
+    def delete_face():
+        name = name_entry.get().strip()
+        if name:
+            threading.Thread(target=delete_face_by_name, args=(name,), daemon=True).start() 
+            
+        else:
+            messagebox.showwarning("Warning", "Please enter a name")
+
+    def delete_face_thread(name):
+        delete_face(name)
+        # Show info and close window in main thread
+        root.after(0, lambda: messagebox.showinfo("Success", f"Deleted face data for {name}"))
+        root.after(0, window.destroy)
+
+
+    tk.Button(window, text="Delete Face", command=delete_face, bg="#f44336", fg="white").pack(pady=10)
+    tk.Button(window, text="Close", command=window.destroy).pack()
+
+def recognize_face_gui_thread():
+    threading.Thread(target=recognize_face_gui, daemon=True).start()
+
+# GUI Window
+root = tk.Tk()
+root.title("Face Recognition Attendance")
+root.geometry("800x400")  # Reduced height since name-to-delete is removed
+root.resizable(False, False)
+root.configure(bg='white')
+
+logo_path = "face.jpg"  # update this path
+pil_logo = Image.open(logo_path)
+pil_logo = pil_logo.resize((400, 400), Image.Resampling.LANCZOS)
+logo_img = ImageTk.PhotoImage(pil_logo)
+
+left_frame = tk.Frame(root)
+left_frame.pack(side="left", padx=30, pady=30)
+
+tk.Label(left_frame, text="Choose an Option", font=("Arial", 18, "bold")).pack(pady=20)
+
+tk.Button(left_frame, text="Add Face", width=25, height=2, command=add_face_gui,
+          bg="#4CAF50", fg="white", font=("Arial", 12)).pack(pady=10)
+
+tk.Button(left_frame, text="Recognize Face", width=25, height=2, command=recognize_face_gui_thread,
+          bg="#2196F3", fg="white", font=("Arial", 12)).pack(pady=10)
+
+tk.Button(left_frame, text="Delete Face", width=25, height=2, command=delete_face_gui,
+          bg="#f44336", fg="white", font=("Arial", 12)).pack(pady=10)
+
+tk.Button(left_frame, text="Exit", width=25, height=2, command=root.destroy,
+          bg="#9E9E9E", fg="white", font=("Arial", 12)).pack(pady=10)
+
+right_frame = tk.Frame(root)
+right_frame.pack(side="right")
+
+logo_label = tk.Label(right_frame, image=logo_img)
+logo_label.pack(side="right")
+
+root.mainloop()
