@@ -10,6 +10,7 @@ import pandas as pd
 import time
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import ttk
 import threading
 from PIL import Image, ImageTk
 
@@ -74,15 +75,14 @@ def add_face_gui():
             flipped = cv2.flip(frame, 1)
             cv2.imshow("Press 's' to save, 'q' to quit", flipped)
 
-            if cv2.waitKey(1) & 0xFF == ord('s'):
+            key = cv2.waitKey(1) & 0xFF
+
+            if key == ord('s'):
                 img_path = os.path.join(add_face_path, f"{name}_{len(os.listdir(add_face_path)) + 1}.jpg")
                 cv2.imwrite(img_path, flipped)
                 print(f"Saved: {img_path}")
-
-            if cv2.getWindowProperty("Press 's' to save, 'q' to quit", cv2.WND_PROP_VISIBLE) < 1:
-                break
-
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+ 
+            elif key == ord('q') or cv2.getWindowProperty("Press 's' to save, 'q' to quit", cv2.WND_PROP_VISIBLE) < 1:
                 break
 
         close_capture()
@@ -244,12 +244,18 @@ def delete_face_gui():
     window.title("Delete Face")
     window.geometry("300x150")
 
-    tk.Label(window, text="Enter Name to Delete:").pack(pady=5)
-    name_entry = tk.Entry(window)
-    name_entry.pack(pady=5)
+    tk.Label(window, text="Select Name to Delete:").pack(pady=5)
+    if os.path.exists(dataset_dir):
+        names = [d for d in os.listdir(dataset_dir) if os.path.isdir(os.path.join(dataset_dir, d))]
+    else:
+        names = []
+
+    name_var = tk.StringVar()
+    name_combo = ttk.Combobox(window, textvariable=name_var, values=names, state="readonly")
+    name_combo.pack(pady=5)
 
     def delete_face():
-        name = name_entry.get().strip()
+        name = name_var.get().strip()
         if name:
             threading.Thread(target=delete_face_by_name, args=(name,), daemon=True).start() 
             
